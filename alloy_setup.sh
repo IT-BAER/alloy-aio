@@ -293,6 +293,11 @@ detect_proxmox() {
         IS_PROXMOX_HOST=true
         export SYSTEM_TYPE="proxmox-host"
         export PROXMOX_NODE="$(hostname)"
+        # Capture Proxmox version if available (local variable)
+        local proxmox_version=""
+        if command -v pveversion >/dev/null 2>&1; then
+            proxmox_version="$(pveversion 2>/dev/null || true)"
+        fi        
     elif [[ -f /proc/1/environ ]] && grep -q "container=lxc" /proc/1/environ 2>/dev/null; then
         IS_PROXMOX_HOST=true
         export SYSTEM_TYPE="proxmox-container"
@@ -315,7 +320,32 @@ detect_proxmox() {
         export SYSTEM_TYPE="standalone"
     fi
     export IS_PROXMOX_HOST
+    # Export a normalized PROXMOX_VERSION for use elsewhere in the script
+    # If proxmox_version is empty, PROXMOX_VERSION will be empty as well
+    export PROXMOX_VERSION="$proxmox_version"
     export DETECTED_SYSTEM_TYPE="$SYSTEM_TYPE"
+}
+
+
+# Compare Proxmox version numbers: returns 0 (true) if PROXMOX_VERSION >= argument
+# Usage: proxmox_version_ge 9
+proxmox_version_ge() {
+    local target="$1"
+    # If PROXMOX_VERSION is empty, treat as not greater/equal
+    if [[ -z "${PROXMOX_VERSION:-}" ]]; then
+        return 1
+    fi
+    # Extract the major version number (digits before first non-digit)
+    local major
+    major=$(echo "$PROXMOX_VERSION" | sed -n 's/^[^0-9]*\([0-9]\+\).*/\1/p' || true)
+    if [[ -z "$major" ]]; then
+        return 1
+    fi
+    if [[ $major -ge $target ]]; then
+        return 0
+    else
+        return 1
+    fi
 }
 
 # Update package lists
@@ -890,9 +920,18 @@ setup_proxmox_exporter_user_and_token() {
     local token_value=""
     PROXMOX_OVERRIDE_GRANTED="1" # Default: do all actions
 
+    local privileges=""
+    if proxmox_version_ge 9; then
+        log "Proxmox version >= 9 detected - excluding deprecated VM.Monitor privilege"
+        privileges="VM.Audit,Datastore.Audit,Sys.Audit,Pool.Audit"
+    else
+        log "Proxmox version < 9 detected - invcluding VM.Monitor privilege for compatibility"
+        privileges="VM.Audit,VM.Monitor,Datastore.Audit,Sys.Audit,Pool.Audit"
+    fi
+
     # Create custom AlloyMonitor role if it doesn't exist
     log "Creating custom AlloyMonitor role..."
-    role_output=$(run_with_spinner "pveum role add AlloyMonitor -privs \"VM.Audit,VM.Monitor,Datastore.Audit,Sys.Audit,Pool.Audit\" 2>&1" "Creating AlloyMonitor role..." || echo "ERROR") || true
+    role_output=$(run_with_spinner "pveum role add AlloyMonitor -privs \"$privileges\" 2>&1" "Creating AlloyMonitor role..." || echo "ERROR") || true
     if echo "$role_output" | grep -qi 'already exists'; then
         log_success "AlloyMonitor role already exists"
     elif echo "$role_output" | grep -qi 'ERROR'; then
