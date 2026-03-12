@@ -109,3 +109,4 @@ DEPLOYMENT_READY.md
 deployment_ready.*
 fix_windows_formatting.ps1
 fix_deployed_config.ps1
+remove_provenance.sh

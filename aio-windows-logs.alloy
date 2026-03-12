@@ -82,6 +82,13 @@ loki.process "windows_events" {
     }
   }
 
+  // Drop well-known cosmetic Windows errors to reduce log noise
+  stage.drop {
+    source              = "event_id"
+    value               = "10016"
+    drop_counter_reason = "dcom_10016"
+  }
+
   stage.template {
     source = "detected_level"
     template = `{{- $level := .level -}}
